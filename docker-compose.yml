@@ -1,0 +1,14 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: campus-sensor-postgres
+    environment:
+      POSTGRES_DB: campus_sensors
+      POSTGRES_USER: campus
+      POSTGRES_PASSWORD: campus123
+    ports:
+      - "5432:5432"
+    volumes:
+      - sensor_pgdata:/var/lib/postgresql/data
+volumes:
+  sensor_pgdata:
