@@ -1,159 +1,432 @@
 # Campus Sensor Monitoring and Alerts
 
-A one-day MVP for the GDG Tech Wildcard backend task. It uses Spring Boot, PostgreSQL, configurable alert rules, rolling-window average rules, alert lifecycle endpoints, and a Python sensor simulator.
+A real-time campus sensor monitoring system built with Java, Spring Boot, and PostgreSQL. The application ingests sensor readings through REST APIs, evaluates configurable alert rules, and generates alerts when monitored values cross specified thresholds.
+
+The project also includes a Python sensor simulator and a k6 load-testing script for evaluating API behavior under concurrent workloads.
+
+## Features
+
+- **REST API:** Endpoints for health checks, sensor ingestion, alert rules, and alerts.
+- **Single Reading Ingestion:** Accept individual sensor readings through an HTTP request.
+- **Batch Ingestion:** Submit multiple sensor readings in one request.
+- **Configurable Alert Rules:** Define metric types, comparison operators, thresholds, and evaluation windows.
+- **Automatic Alert Generation:** Create alerts when incoming readings satisfy enabled rules.
+- **PostgreSQL Integration:** Persist sensor readings, alert rules, and generated alerts.
+- **Python Sensor Simulator:** Generate and submit large volumes of simulated sensor data.
+- **Load Testing:** Use k6 to measure request throughput, response times, and HTTP failures.
+
+## Technology Stack
+
+| Technology | Purpose |
+|---|---|
+| Java | Application development |
+| Spring Boot | REST API and application framework |
+| Spring Data JPA | Database access and persistence |
+| Hibernate | Object-relational mapping |
+| PostgreSQL | Relational database |
+| Maven | Dependency management and build |
+| Python | Sensor simulation |
+| Requests | HTTP communication from the simulator |
+| k6 | API load testing |
 
 ## Architecture
 
-`Sensor Simulator / Client -> Spring Boot REST API -> PostgreSQL`
+The application follows this processing flow:
 
-- Single readings and batches are accepted by the API.
-- Readings are persisted before rule evaluation completes.
-- Instant rules compare each reading to a threshold.
-- Window rules calculate the average for the same sensor and metric over the configured number of minutes.
-- A rule/sensor pair has at most one active alert (`OPEN` or `ACKNOWLEDGED`) at a time.
-- Alerts can be acknowledged and resolved.
-- PostgreSQL indexes support common sensor/time and alert-status lookups.
+```text
+Sensor Simulator / External Client
+               |
+               v
+        Spring Boot REST API
+               |
+               v
+       Reading Ingestion Service
+               |
+               v
+       PostgreSQL Database
+               |
+               v
+       Alert Rule Evaluation
+               |
+               v
+        Generated Alerts
+               |
+               v
+         Alerts REST API
+```
 
-**Trade-off:** This first version uses synchronous rule evaluation and database-backed aggregation. It prioritizes correctness and a small, testable architecture over maximum throughput. For a production-scale version, put ingestion behind Kafka or another durable queue, use independent workers, add idempotency keys and retry/replay handling, and maintain window aggregates in a stream processor. Do not claim 10,000 readings/second unless your load test proves it.
+Sensor readings are submitted individually or in batches. The application evaluates the readings against enabled alert rules and creates alerts when the configured conditions are satisfied.
 
-## Requirements
+## Project Structure
 
-- Java 21
-- Maven 3.9+
-- Docker Desktop (or a local PostgreSQL 16 instance)
-- Python 3.10+ for the simulator
-- Optional: k6 for the load test
+```text
+campus-sensor-monitor/
+├── src/
+│   └── main/
+│       ├── java/
+│       │   └── com/gdg/campus/
+│       │       ├── controller/
+│       │       ├── dto/
+│       │       ├── model/
+│       │       ├── repo/
+│       │       └── service/
+│       └── resources/
+│           └── application.properties
+├── simulator/
+│   ├── sensor_simulator.py
+│   └── requirements.txt
+├── loadtest/
+│   └── sensor-load.js
+├── docker-compose.yml
+├── pom.xml
+└── README.md
+```
 
-## Run on Windows PowerShell
+## Prerequisites
 
-1. Unzip the project and open PowerShell in the project directory.
-2. Start PostgreSQL:
+Install the following software before running the project:
 
-   ```powershell
-   docker compose up -d
-   ```
+- Java Development Kit
+- Apache Maven
+- PostgreSQL
+- Python 3
+- k6 (required for load testing)
 
-3. Start the API:
-
-   ```powershell
-   mvn spring-boot:run
-   ```
-
-4. Check health:
-
-   ```powershell
-   Invoke-RestMethod http://localhost:8080/api/health
-   ```
-
-If Maven is not installed, use IntelliJ IDEA to open `pom.xml`, allow Maven to import dependencies, then run `CampusSensorApplication`.
-
-## Run on macOS/Linux
+Verify your installations:
 
 ```bash
-docker compose up -d
+java -version
+mvn -version
+python --version
+psql --version
+k6 version
+```
+
+## Getting Started
+
+### 1. Clone the repository
+
+```bash
+git clone https://github.com/mahesh-678/campus-sensor-monitor.git
+cd campus-sensor-monitor
+```
+
+### 2. Configure PostgreSQL
+
+Make sure PostgreSQL is installed and its service is running.
+
+The default local database configuration is:
+
+| Setting | Default value |
+|---|---|
+| Database | `campus_sensors` |
+| Username | `campus` |
+| Password | `campus123` |
+| Port | `5432` |
+
+If the database and user do not already exist, connect to PostgreSQL using an administrative account:
+
+```bash
+psql -U postgres -h localhost -p 5432 -d postgres
+```
+
+Create the application user:
+
+```sql
+CREATE USER campus WITH PASSWORD 'campus123';
+```
+
+Create the database:
+
+```sql
+CREATE DATABASE campus_sensors OWNER campus;
+```
+
+If the user or database already exists, do not create it again.
+
+**Security note:** The default credentials are for local development only. Use appropriate credentials and environment variables for other environments.
+
+### 3. Configure the database connection
+
+The application supports these environment variables:
+
+| Variable | Default |
+|---|---|
+| `DB_URL` | `jdbc:postgresql://localhost:5432/campus_sensors` |
+| `DB_USERNAME` | `campus` |
+| `DB_PASSWORD` | `campus123` |
+
+Set different values if your PostgreSQL configuration differs from the defaults.
+
+For PowerShell, you can set them for the current terminal session:
+
+```powershell
+$env:DB_URL = "jdbc:postgresql://localhost:5432/campus_sensors"
+$env:DB_USERNAME = "campus"
+$env:DB_PASSWORD = "campus123"
+```
+
+### 4. Build the application
+
+Run:
+
+```bash
+mvn clean package
+```
+
+### 5. Start the backend
+
+Run:
+
+```bash
 mvn spring-boot:run
 ```
 
-## API examples
+The application runs on:
 
-### Create an instant rule
+```text
+http://localhost:8080
+```
+
+Keep the application terminal open while testing the APIs.
+
+### 6. Verify the health endpoint
+
+In another terminal, run:
 
 ```bash
-curl -X POST http://localhost:8080/api/rules \
-  -H "Content-Type: application/json" \
-  -d '{"name":"Hot library","type":"temperature","operator":">","threshold":32,"windowMinutes":0}'
+curl.exe -i http://localhost:8080/api/health
 ```
 
-### Create a 10-minute average rule
+A successful health check should return an HTTP `200` response.
+
+## API Reference
+
+The following endpoints are implemented in the application.
+
+| Method | Endpoint | Purpose |
+|---|---|---|
+| GET | `/api/health` | Check application health |
+| POST | `/api/readings` | Submit one sensor reading |
+| POST | `/api/readings/batch` | Submit a batch of readings |
+| POST | `/api/rules` | Create an alert rule |
+| GET | `/api/rules` | Retrieve alert rules |
+| PUT | `/api/rules/{id}` | Update an alert rule |
+| PATCH | `/api/rules/{id}/enabled?value=true` | Enable or disable a rule |
+| DELETE | `/api/rules/{id}` | Delete an alert rule |
+| GET | `/api/alerts` | Retrieve generated alerts |
+
+### Example 1: Create an alert rule
+
+This rule generates an alert when a temperature reading exceeds 40.
 
 ```bash
-curl -X POST http://localhost:8080/api/rules \
-  -H "Content-Type: application/json" \
-  -d '{"name":"Library average too hot","type":"temperature","operator":">","threshold":30,"windowMinutes":10}'
+curl.exe -X POST http://localhost:8080/api/rules ^
+  -H "Content-Type: application/json" ^
+  -d "{\"name\":\"High Temperature Alert\",\"type\":\"temperature\",\"operator\":\">\",\"threshold\":40,\"windowMinutes\":0}"
 ```
 
-### Submit one reading
+The request defines:
+
+- Rule name: `High Temperature Alert`
+- Metric type: `temperature`
+- Operator: `>`
+- Threshold: `40`
+- Evaluation window: `0` minutes
+
+### Example 2: Submit a sensor reading
 
 ```bash
-curl -X POST http://localhost:8080/api/readings \
-  -H "Content-Type: application/json" \
-  -d '{"sensorId":"library-floor-2","type":"temperature","value":34.5,"timestamp":"2026-10-17T10:30:00Z"}'
+curl.exe -X POST http://localhost:8080/api/readings ^
+  -H "Content-Type: application/json" ^
+  -d "{\"sensorId\":\"TEMP_SENSOR_001\",\"type\":\"temperature\",\"value\":45,\"timestamp\":\"2026-10-18T12:00:00Z\"}"
 ```
 
-### Submit a batch
+The timestamp must be an ISO 8601 timestamp.
+
+The API accepts readings with a sensor ID, metric type, non-negative value, and timestamp.
+
+### Example 3: Submit readings in a batch
+
+The batch endpoint accepts a JSON array of readings.
+
+```json
+[
+  {
+    "sensorId": "TEMP_SENSOR_002",
+    "type": "temperature",
+    "value": 25,
+    "timestamp": "2026-10-18T12:00:00Z"
+  },
+  {
+    "sensorId": "TEMP_SENSOR_003",
+    "type": "temperature",
+    "value": 35,
+    "timestamp": "2026-10-18T12:00:00Z"
+  },
+  {
+    "sensorId": "TEMP_SENSOR_004",
+    "type": "temperature",
+    "value": 50,
+    "timestamp": "2026-10-18T12:00:00Z"
+  }
+]
+```
+
+Submit the array to:
+
+```text
+POST http://localhost:8080/api/readings/batch
+```
+
+With an enabled temperature rule using a threshold of 40 and operator `>`, a reading of 50 satisfies the alert condition.
+
+### Example 4: Retrieve alerts
 
 ```bash
-curl -X POST http://localhost:8080/api/readings/batch \
-  -H "Content-Type: application/json" \
-  -d '[
-    {"sensorId":"library-floor-2","type":"temperature","value":34.5,"timestamp":"2026-10-17T10:30:00Z"},
-    {"sensorId":"library-floor-2","type":"temperature","value":35.0,"timestamp":"2026-10-17T10:31:00Z"}
-  ]'
+curl.exe http://localhost:8080/api/alerts
 ```
 
-### Manage rules
+### Example 5: Retrieve alert rules
 
 ```bash
-curl http://localhost:8080/api/rules
-curl -X PATCH "http://localhost:8080/api/rules/1/enabled?value=false"
-curl -X PATCH "http://localhost:8080/api/rules/1/enabled?value=true"
-curl -X PUT http://localhost:8080/api/rules/1 -H "Content-Type: application/json" \
-  -d '{"name":"Hot library updated","type":"temperature","operator":">=","threshold":33,"windowMinutes":0}'
+curl.exe http://localhost:8080/api/rules
 ```
 
-### View and manage alerts
+## Sensor Simulation
+
+The Python simulator generates sensor data and submits it to the batch ingestion endpoint.
+
+### Install dependencies
 
 ```bash
-curl http://localhost:8080/api/alerts
-curl "http://localhost:8080/api/alerts?status=OPEN"
-curl -X PATCH http://localhost:8080/api/alerts/1/acknowledge
-curl -X PATCH http://localhost:8080/api/alerts/1/resolve
+python -m pip install -r simulator/requirements.txt
 ```
 
-## Run the simulator
+### Run the simulator
 
-```powershell
-cd simulator
-python -m pip install -r requirements.txt
-python sensor_simulator.py --count 10000 --batch-size 250 --workers 16
+Make sure the Spring Boot application is running first.
+
+Run:
+
+```bash
+python simulator/sensor_simulator.py --count 10000 --batch-size 250 --workers 8
 ```
 
-The script submits 10,000 readings in concurrent batches and prints the observed effective throughput. It is a practical smoke/load test, not proof of 10,000 readings in one second.
+Parameters:
 
-## Optional k6 test
+| Parameter | Description |
+|---|---|
+| `--count` | Number of sensor readings to generate |
+| `--batch-size` | Number of readings per batch |
+| `--workers` | Number of concurrent workers |
+| `--url` | Target batch ingestion endpoint |
 
-The supplied `loadtest/sensor-load.js` is an initial k6 workload. Install k6, then run from the project root:
+The default endpoint is:
+
+```text
+http://localhost:8080/api/readings/batch
+```
+
+## Load Testing with k6
+
+The project includes a k6 script for evaluating the API under a scheduled request rate.
+
+### Run the test
+
+Ensure the Spring Boot application and PostgreSQL are running.
+
+Execute:
 
 ```bash
 k6 run loadtest/sensor-load.js
 ```
 
-This script uses batched requests at a high arrival rate; interpret request rate and reading rate separately. Tune batch size, VUs, database resources, and duration as necessary. Save the terminal output in `LOAD_TEST_REPORT.md`, including machine specs and exact settings.
+The tested configuration schedules 100 batch requests per second for 10 seconds, with 10 sensor readings in each batch.
 
-## Load-test report template
+The test reports metrics including:
 
-Copy this into `LOAD_TEST_REPORT.md` after running your test; fill it with actual results.
+- Total HTTP requests
+- HTTP request failure rate
+- Average response time
+- Median response time
+- 90th-percentile response time
+- 95th-percentile response time
+- Maximum response time
+- Completed iterations
 
-- Date/time:
-- OS and CPU/RAM:
-- Java version:
-- PostgreSQL version and configuration:
-- Test tool and exact command:
-- Number of readings attempted:
-- Number of readings accepted:
-- Number of readings persisted:
-- Total elapsed time:
-- Effective readings/second:
-- p50/p95/p99 request latency (if measured):
-- Error rate:
-- Bottleneck observed:
-- Optimization made and before/after result:
+The script also checks whether API responses have successful HTTP status codes.
 
-## Important limitations to disclose
+## Performance Testing Results
 
-- This MVP does not yet use Kafka or another durable queue; ingestion and evaluation run synchronously.
-- Window aggregation queries PostgreSQL for each relevant rule/reading and may become expensive under a large burst.
-- Alert deduplication is implemented at application level, so simultaneous workers could race. For a production deployment, enforce uniqueness/locking at the database level.
-- Window evaluation uses the reading's event timestamp. Late-arriving data can affect prior windows; event-time watermarks/recomputation are not implemented.
-- There is no authentication/authorization layer; add it if the API is exposed beyond local development.
-- The load-test results must be measured on the target machine. Do not claim the 10,000/second target without evidence.
+The following measurements were obtained during local testing.
+
+### Python Sensor Simulation
+
+| Metric | Result |
+|---|---:|
+| Readings attempted | 10,000 |
+| Readings accepted by API | 10,000 |
+| Failed requests reported | 0 |
+| Elapsed time | 1.981 seconds |
+| Effective accepted throughput | 5,047.7 readings/second |
+
+Test command:
+
+```bash
+python simulator/sensor_simulator.py --count 10000 --batch-size 250 --workers 8
+```
+
+### k6 Sustained Load Test
+
+| Metric | Result |
+|---|---:|
+| Test duration | 10 seconds |
+| Target batch request rate | 100 requests/second |
+| Completed HTTP requests | 1,000 |
+| Readings per batch | 10 |
+| Readings submitted in request payloads | 10,000 |
+| HTTP requests failed | 0 |
+| HTTP request failure rate | 0% |
+| Average response time | 12.83 ms |
+| Median response time | 11.55 ms |
+| 90th-percentile latency | 14.88 ms |
+| 95th-percentile latency | 16.90 ms |
+| Maximum response time | 91.79 ms |
+
+Test command:
+
+```bash
+k6 run loadtest/sensor-load.js
+```
+
+All 1,000 completed HTTP requests returned successful responses during this test.
+
+### Interpreting the Results
+
+The Python simulator reported that all 10,000 generated readings were accepted. The k6 test completed 1,000 HTTP requests, each containing 10 sensor readings.
+
+These results describe separate local test runs. They demonstrate successful request processing under the tested conditions but do not independently verify the persistence of every submitted reading.
+
+The k6 test measured approximately 100 batch requests per second, equivalent to approximately 1,000 readings per second offered in the request payloads.
+
+**These measurements are from a local development environment and are not production capacity guarantees.** Performance may vary with hardware, database configuration, workload, network conditions, and concurrency.
+
+## Future Improvements
+
+Potential improvements include:
+
+- Add a dashboard for visualizing sensor readings and active alerts.
+- Introduce authentication and authorization for API endpoints.
+- Add unit and integration tests.
+- Evaluate connection pooling and database write performance.
+- Test sustained workloads at progressively higher request rates.
+- Add monitoring, structured logging, and deployment configuration.
+- Improve alert lifecycle management and notification delivery.
+
+## Author
+
+**Mahesh Raj J R**
+
+GitHub: [mahesh-678](https://github.com/mahesh-678)
+

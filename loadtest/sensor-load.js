@@ -3,13 +3,13 @@ import { check } from 'k6';
 
 export const options = {
   scenarios: {
-    burst: {
+    sensor_load: {
       executor: 'constant-arrival-rate',
-      rate: 1000,
+      rate: 100,
       timeUnit: '1s',
-      duration: '1s',
-      preAllocatedVUs: 100,
-      maxVUs: 1000,
+      duration: '10s',
+      preAllocatedVUs: 50,
+      maxVUs: 250,
     },
   },
   thresholds: {
@@ -20,6 +20,7 @@ export const options = {
 export default function () {
   const now = new Date().toISOString();
   const payload = [];
+
   for (let i = 0; i < 10; i++) {
     payload.push({
       sensorId: `load-sensor-${__VU}-${__ITER}-${i}`,
@@ -28,9 +29,19 @@ export default function () {
       timestamp: now,
     });
   }
-  const res = http.post('http://localhost:8080/api/readings/batch', JSON.stringify(payload), {
-    headers: { 'Content-Type': 'application/json' },
-    timeout: '30s',
+
+  const response = http.post(
+    'http://localhost:8080/api/readings/batch',
+    JSON.stringify(payload),
+    {
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      timeout: '30s',
+    }
+  );
+
+  check(response, {
+    'status is 2xx': (r) => r.status >= 200 && r.status < 300,
   });
-  check(res, { 'status is 2xx': (r) => r.status >= 200 && r.status < 300 });
 }
